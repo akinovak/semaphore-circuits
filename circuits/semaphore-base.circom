@@ -1,4 +1,4 @@
-include "./tree/incrementalQuinTree.circom";
+include "./tree/incrementalMerkleTree.circom";
 include "../node_modules/circomlib/circuits/pedersen.circom";
 include "../node_modules/circomlib/circuits/mimcsponge.circom";
 include "../node_modules/circomlib/circuits/bitify.circom";
@@ -9,32 +9,18 @@ include "../node_modules/circomlib/circuits/poseidon.circom";
 include "../node_modules/circomlib/circuits/comparators.circom";
 
 
-template CalculateIdentityCommitment(IDENTITY_PK_SIZE_IN_BITS, NULLIFIER_TRAPDOOR_SIZE_IN_BITS) {
-  signal input identity_pk[IDENTITY_PK_SIZE_IN_BITS];
-  signal input identity_nullifier[NULLIFIER_TRAPDOOR_SIZE_IN_BITS];
-  signal input identity_trapdoor[NULLIFIER_TRAPDOOR_SIZE_IN_BITS];
+template CalculateIdentityCommitment() {
+    signal input identity_public_key_subgroup_element;
+    signal input identity_nullifier;
+    signal input identity_trapdoor;
 
-  signal output out;
+    signal output out;
 
-  // identity commitment is a pedersen hash of (identity_pk, identity_nullifier, identity_trapdoor), each element padded up to 256 bits
-  component identity_commitment = Pedersen(3*256);
-  for (var i = 0; i < 256; i++) {
-    if (i < IDENTITY_PK_SIZE_IN_BITS) {
-      identity_commitment.in[i] <== identity_pk[i];
-    } else {
-      identity_commitment.in[i] <== 0;
-    }
-
-    if (i < NULLIFIER_TRAPDOOR_SIZE_IN_BITS) {
-      identity_commitment.in[i + 256] <== identity_nullifier[i];
-      identity_commitment.in[i + 2*256] <== identity_trapdoor[i];
-    } else {
-      identity_commitment.in[i + 256] <== 0;
-      identity_commitment.in[i + 2*256] <== 0;
-    }
-  }
-
-  out <== identity_commitment.out[0];
+    component hasher = Poseidon(3);
+    hasher.inputs[0] <== identity_public_key_subgroup_element;
+    hasher.inputs[1] <== identity_nullifier;
+    hasher.inputs[2] <== identity_trapdoor;
+    out <== hasher.out;
 }
 
 template CalculateNullifier(nInputs) {
@@ -50,14 +36,7 @@ template CalculateNullifier(nInputs) {
 
 // n_levels must be < 32
 template Semaphore(n_levels) {
-
-    // BEGIN constants
-
-    var IDENTITY_PK_SIZE_IN_BITS = 254;
-    var NULLIFIER_TRAPDOOR_SIZE_IN_BITS = 248;
-    var EXTERNAL_NULLIFIER_SIZE_IN_BITS = 232;
-
-    var LEAVES_PER_NODE = 5;
+    var LEAVES_PER_NODE = 2;
     var LEAVES_PER_PATH_LEVEL = LEAVES_PER_NODE - 1;
 
     // END constants
@@ -107,31 +86,18 @@ template Semaphore(n_levels) {
     dbl3.x <== dbl2.xout;
     dbl3.y <== dbl2.yout;
 
-    component identity_nullifier_bits = Num2Bits(NULLIFIER_TRAPDOOR_SIZE_IN_BITS);
-    identity_nullifier_bits.in <== identity_nullifier;
-
-    component identity_trapdoor_bits = Num2Bits(NULLIFIER_TRAPDOOR_SIZE_IN_BITS);
-    identity_trapdoor_bits.in <== identity_trapdoor;
-
-    component identity_pk_0_bits = Num2Bits_strict();
-    identity_pk_0_bits.in <== dbl3.xout;
-
     // BEGIN identity commitment
-    component identity_commitment = CalculateIdentityCommitment(IDENTITY_PK_SIZE_IN_BITS, NULLIFIER_TRAPDOOR_SIZE_IN_BITS);
-    for (var i = 0; i < IDENTITY_PK_SIZE_IN_BITS; i++) {
-      identity_commitment.identity_pk[i] <== identity_pk_0_bits.out[i];
-    }
-    for (var i = 0; i < NULLIFIER_TRAPDOOR_SIZE_IN_BITS; i++) {
-      identity_commitment.identity_nullifier[i] <== identity_nullifier_bits.out[i];
-      identity_commitment.identity_trapdoor[i] <== identity_trapdoor_bits.out[i];
-    }
+    component identity_commitment = CalculateIdentityCommitment();
+    identity_commitment.identity_public_key_subgroup_element <== dbl3.xout;
+    identity_commitment.identity_nullifier <== identity_nullifier;
+    identity_commitment.identity_trapdoor <== identity_trapdoor;
     // END identity commitment
 
     // BEGIN TREE
 
     var i;
     var j;
-    component inclusionProof = QuinTreeInclusionProof(n_levels);
+    component inclusionProof = MerkleTreeInclusionProof(n_levels);
     inclusionProof.leaf <== identity_commitment.out;
 
     for (i = 0; i < n_levels; i++) {
